@@ -4,6 +4,7 @@ import { config } from './config';
 import { bundle } from './commands/bundle';
 import { handleLoginButton, handleLoginModal, login, LOGIN_BUTTON_ID, LOGIN_MODAL_ID, logout } from './commands/login';
 import { nightmarket } from './commands/nightmarket';
+import { rank } from './commands/rank';
 import { shop } from './commands/shop';
 import type { Command } from './commands/types';
 import { wishlist } from './commands/wishlist';
@@ -11,7 +12,7 @@ import { runDailyCheck } from './jobs/dailyCheck';
 import { ensureAssets } from './riot/assets';
 import { NeedsLoginError, RiotError } from './riot/errors';
 
-const commands: Command[] = [shop, bundle, nightmarket, wishlist, login, logout];
+const commands: Command[] = [shop, bundle, nightmarket, rank, wishlist, login, logout];
 const byName = new Map(commands.map((c) => [c.data.name, c]));
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -19,7 +20,11 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 async function replyError(interaction: RepliableInteraction, err: unknown): Promise<void> {
   let message: string;
   if (err instanceof NeedsLoginError) message = err.message;
-  else if (err instanceof RiotError) message = `Riot's servers returned an error${err.status ? ` (${err.status})` : ''}. Try again in a bit.`;
+  else if (err instanceof RiotError) {
+    message = err.status
+      ? `Riot's servers returned an error (${err.status}). Try again in a bit.`
+      : `Couldn't reach Riot (${err.message}). Try again in a bit.`;
+  }
   else {
     console.error(err);
     message = 'Something went wrong. Check the bot logs.';

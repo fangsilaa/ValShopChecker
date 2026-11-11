@@ -18,6 +18,17 @@ import type { Command } from './types';
 export const LOGIN_BUTTON_ID = 'login:open';
 export const LOGIN_MODAL_ID = 'login:submit';
 const LOGIN_INPUT_ID = 'login:value';
+/** The "Paste cookie / URL" button stops working after this long. */
+const LOGIN_BUTTON_TTL_MS = 5 * 60_000;
+
+const expiredRow = () =>
+  new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(LOGIN_BUTTON_ID)
+      .setLabel('Expired, run /login again')
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(true),
+  );
 
 export const login: Command = {
   data: new SlashCommandBuilder().setName('login').setDescription('Link your Riot account so the bot can read your shop'),
@@ -43,10 +54,24 @@ export const login: Command = {
       new ButtonBuilder().setCustomId(LOGIN_BUTTON_ID).setLabel('Paste cookie / URL').setStyle(ButtonStyle.Primary),
     );
     await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+
+    // Grey the button out once it expires. (Interaction tokens last 15 min, so this edit is still allowed.)
+    setTimeout(() => {
+      interaction.editReply({ components: [expiredRow()] }).catch(() => {
+        /* user dismissed the message; nothing to do */
+      });
+    }, LOGIN_BUTTON_TTL_MS).unref();
   },
 };
 
 export async function handleLoginButton(interaction: ButtonInteraction): Promise<void> {
+  // Also guard server-side, in case the timer didn't run (e.g. the bot restarted).
+  if (Date.now() - interaction.message.createdTimestamp > LOGIN_BUTTON_TTL_MS) {
+    await interaction.update({ components: [expiredRow()] });
+    await interaction.followUp({ content: 'That login button expired. Run `/login` again.', ephemeral: true });
+    return;
+  }
+
   const modal = new ModalBuilder()
     .setCustomId(LOGIN_MODAL_ID)
     .setTitle('Link Riot account')

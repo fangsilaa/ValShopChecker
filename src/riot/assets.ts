@@ -18,9 +18,24 @@ export interface BundleInfo {
   icon: string | null;
 }
 
+export interface RankTierInfo {
+  name: string; // e.g. "Gold 2"
+  color: number;
+  icon: string | null;
+}
+export interface ActInfo {
+  uuid: string;
+  name: string; // e.g. "Episode 9 · Act III"
+  start: number;
+  end: number;
+}
+
 let skins = new Map<string, SkinInfo>();
 let tiers = new Map<string, TierInfo>();
 let bundles = new Map<string, BundleInfo>();
+let rankTiers = new Map<number, RankTierInfo>();
+let acts: ActInfo[] = [];
+let maps = new Map<string, string>(); // map path ("/Game/Maps/Ascent/Ascent") -> display name
 let loadedAt = 0;
 let loading: Promise<void> | null = null;
 
@@ -31,7 +46,7 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 async function refreshAssets(): Promise<void> {
-  const [rawSkins, rawTiers, rawBundles] = await Promise.all([
+  const [rawSkins, rawTiers, rawBundles, rawRankTables, rawSeasons, rawMaps] = await Promise.all([
     getJson<
       {
         displayName: string;
@@ -43,7 +58,41 @@ async function refreshAssets(): Promise<void> {
     >('weapons/skins'),
     getJson<{ uuid: string; devName: string; highlightColor: string; displayIcon: string | null }[]>('contenttiers'),
     getJson<{ uuid: string; displayName: string; displayIcon: string | null }[]>('bundles'),
+    getJson<{ tiers: { tier: number; tierName: string; color: string | null; largeIcon: string | null }[] }[]>(
+      'competitivetiers',
+    ),
+    getJson<
+      { uuid: string; displayName: string; type: string | null; startTime: string; endTime: string; parentUuid: string | null }[]
+    >('seasons'),
+    getJson<{ displayName: string; mapUrl: string | null }[]>('maps'),
   ]);
+
+  // Rank tiers: the last table is the current ranking system.
+  const nextRankTiers = new Map<number, RankTierInfo>();
+  for (const t of rawRankTables.at(-1)?.tiers ?? []) {
+    nextRankTiers.set(t.tier, {
+      name: titleCase(t.tierName),
+      color: t.color ? parseInt(t.color.slice(0, 6), 16) : 0x2b2d31,
+      icon: t.largeIcon,
+    });
+  }
+
+  // Acts, named "Episode X · Act Y" using their parent episode.
+  const seasonById = new Map(rawSeasons.map((s) => [s.uuid.toLowerCase(), s]));
+  const nextActs: ActInfo[] = rawSeasons
+    .filter((s) => s.type === 'EAresSeasonType::Act')
+    .map((s) => {
+      const parent = s.parentUuid ? seasonById.get(s.parentUuid.toLowerCase()) : undefined;
+      return {
+        uuid: s.uuid.toLowerCase(),
+        name: [parent?.displayName, s.displayName].filter(Boolean).map((n) => titleCase(n!)).join(' · '),
+        start: Date.parse(s.startTime),
+        end: Date.parse(s.endTime),
+      };
+    });
+
+  const nextMaps = new Map<string, string>();
+  for (const m of rawMaps) if (m.mapUrl) nextMaps.set(m.mapUrl.toLowerCase(), m.displayName);
 
   const nextSkins = new Map<string, SkinInfo>();
   for (const s of rawSkins) {
@@ -72,6 +121,9 @@ async function refreshAssets(): Promise<void> {
   skins = nextSkins;
   tiers = nextTiers;
   bundles = nextBundles;
+  rankTiers = nextRankTiers;
+  acts = nextActs;
+  maps = nextMaps;
   loadedAt = Date.now();
   console.log(`Loaded ${skins.size} skins, ${tiers.size} tiers, ${bundles.size} bundles from valorant-api.com`);
 }
@@ -94,6 +146,19 @@ export async function ensureAssets(): Promise<void> {
 export const getSkin = (levelUuid: string) => skins.get(levelUuid.toLowerCase());
 export const getTier = (uuid: string) => tiers.get(uuid.toLowerCase());
 export const getBundle = (uuid: string) => bundles.get(uuid.toLowerCase());
+export const getRankTier = (tier: number) => rankTiers.get(tier);
+export const getAct = (uuid: string) => acts.find((a) => a.uuid === uuid.toLowerCase());
+export const getCurrentAct = () => acts.find((a) => a.start <= Date.now() && Date.now() < a.end);
+export const getMapName = (mapPath: string) => maps.get(mapPath.toLowerCase());
+
+/** "GOLD 2" -> "Gold 2", "ACT III" -> "Act III" (keeps roman numerals). */
+function titleCase(s: string): string {
+  return s
+    .toLowerCase()
+    .split(' ')
+    .map((w) => (/^[ivx]+$/.test(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ');
+}
 
 /** For wishlist autocomplete. Only buyable skins (those with a tier). */
 export function searchSkins(query: string, limit = 25): SkinInfo[] {

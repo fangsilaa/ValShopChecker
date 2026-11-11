@@ -21,7 +21,8 @@ export const wishlist: Command = {
     ),
 
   async autocomplete(interaction) {
-    await ensureAssets();
+    // Discord drops autocomplete answers after 3s; if the skin catalog is still loading, answer with what we have.
+    await Promise.race([ensureAssets().catch(() => {}), new Promise((r) => setTimeout(r, 2000))]);
     const query = interaction.options.getFocused().trim().toLowerCase();
     const wished = getWishlist(interaction.user.id);
     const wishedSet = new Set(wished);

@@ -13,6 +13,7 @@ A private Discord bot that shows each linked user their Valorant **daily shop**,
 | `/shop` | Your 4 daily skins with prices |
 | `/bundle` | Current featured bundle(s) |
 | `/nightmarket` | Your night market, when it's running |
+| `/rank [user]` | Competitive rank, RR, last game's RR change and this act's record (public reply). Pick a user to see a friend's rank (they must have linked with `/login`) |
 | `/wishlist [skin]` | Pick a skin to add it (or remove it if it is already on your list). Leave empty to see your list. At 00:02 UTC the bot checks everyone's shop and pings matches |
 
 All replies are only visible to you. Wishlist alerts go to `ALERT_CHANNEL_ID`, or by DM if that isn't set.
