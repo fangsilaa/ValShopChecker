@@ -13,7 +13,7 @@ A private Discord bot that shows each linked user their Valorant **daily shop**,
 | `/shop` | Your 4 daily skins with prices |
 | `/bundle` | Current featured bundle(s) |
 | `/nightmarket` | Your night market, when it's running |
-| `/wishlist add/remove/list` | Manage skins you want. At 00:02 UTC the bot checks everyone's shop and pings matches |
+| `/wishlist [skin]` | Pick a skin to add it (or remove it if it is already on your list). Leave empty to see your list. At 00:02 UTC the bot checks everyone's shop and pings matches |
 
 All replies are only visible to you. Wishlist alerts go to `ALERT_CHANNEL_ID`, or by DM if that isn't set.
 
@@ -34,7 +34,7 @@ All replies are only visible to you. Wishlist alerts go to `ALERT_CHANNEL_ID`, o
    ```
 5. In Discord: `/login`, then `/shop`.
 
-Test the wishlist alert without waiting for reset: add a skin that's currently in your shop with `/wishlist add`, then run `npm run check-now`.
+Test the wishlist alert without waiting for reset: add a skin that's currently in your shop with `/wishlist skin:<name>`, then run `npm run check-now`.
 
 ## Deploying to a Linux server
 
