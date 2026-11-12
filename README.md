@@ -14,9 +14,10 @@ A private Discord bot that shows each linked user their Valorant **daily shop**,
 | `/bundle [account]` | Current featured bundle(s) |
 | `/nightmarket [account]` | Your night market, when it's running |
 | `/rank [user] [account]` | Competitive rank, RR, last game's RR change and this act's record (public reply). Pick a user to see a friend's rank (they must have linked with `/login`) |
+| `/comp map` | A random 5-agent comp a pro team played on that map in a VCT event this year or last year, with the team, opponent, result, event and a vlr.gg match link. **Reroll** picks another. Data is scraped from [vlr.gg](https://www.vlr.gg) at startup and daily, and stored in the database |
 | `/wishlist [skin]` | Pick a skin to add it (or remove it if it is already on your list). Leave empty to see your list. At 00:02 UTC the bot checks the shops of all your linked accounts and pings matches |
 
-`[account]` is optional and autocompletes your linked accounts; leave it empty to use your default. `/shop`, `/nightmarket` and `/rank` reply publicly; the others are only visible to you. Wishlist alerts go to `ALERT_CHANNEL_ID`, or by DM if that isn't set.
+`[account]` is optional and autocompletes your linked accounts; leave it empty to use your default. `/shop`, `/nightmarket`, `/rank` and `/comp` reply publicly; the others are only visible to you. Wishlist alerts go to `ALERT_CHANNEL_ID`, or by DM if that isn't set.
 
 ## Setup
 

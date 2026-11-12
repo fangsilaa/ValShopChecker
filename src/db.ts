@@ -276,3 +276,135 @@ export function setCachedShop(puuid: string, data: unknown, expiresAt: number): 
 export function clearCachedShop(puuid: string): void {
   db.prepare('DELETE FROM account_shop_cache WHERE puuid = ?').run(puuid);
 }
+
+// ---- VCT comps scraped from vlr.gg (see src/vlr/comps.ts) ----
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS vct_events (
+  event_id   INTEGER PRIMARY KEY,
+  name       TEXT NOT NULL,
+  year       INTEGER NOT NULL,
+  completed  INTEGER NOT NULL DEFAULT 0,
+  scraped_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS vct_comps (
+  game_id    INTEGER NOT NULL,
+  team       TEXT NOT NULL,
+  map        TEXT NOT NULL,
+  agents     TEXT NOT NULL,
+  opponent   TEXT NOT NULL,
+  result     TEXT NOT NULL,
+  match_url  TEXT NOT NULL,
+  event_id   INTEGER NOT NULL,
+  event_name TEXT NOT NULL,
+  PRIMARY KEY (game_id, team)
+);
+CREATE INDEX IF NOT EXISTS vct_comps_map ON vct_comps (map);
+`);
+
+export interface VctComp {
+  gameId: number;
+  team: string;
+  map: string;
+  agents: string; // 5 agent names, sorted, joined with ", "
+  opponent: string;
+  result: 'win' | 'loss';
+  matchUrl: string;
+  eventId: number;
+  eventName: string;
+}
+
+interface VctCompRow {
+  game_id: number;
+  team: string;
+  map: string;
+  agents: string;
+  opponent: string;
+  result: string;
+  match_url: string;
+  event_id: number;
+  event_name: string;
+}
+
+const toVctComp = (r: VctCompRow): VctComp => ({
+  gameId: r.game_id,
+  team: r.team,
+  map: r.map,
+  agents: r.agents,
+  opponent: r.opponent,
+  result: r.result === 'win' ? 'win' : 'loss',
+  matchUrl: r.match_url,
+  eventId: r.event_id,
+  eventName: r.event_name,
+});
+
+/** Replaces all stored comps of one event and records it as scraped. */
+export function saveVctEvent(
+  event: { id: number; name: string; year: number; completed: boolean },
+  comps: VctComp[],
+): void {
+  db.exec('BEGIN');
+  try {
+    db.prepare('DELETE FROM vct_comps WHERE event_id = ?').run(event.id);
+    const insert = db.prepare(
+      `INSERT OR REPLACE INTO vct_comps (game_id, team, map, agents, opponent, result, match_url, event_id, event_name)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const c of comps) {
+      insert.run(c.gameId, c.team, c.map, c.agents, c.opponent, c.result, c.matchUrl, c.eventId, c.eventName);
+    }
+    db.prepare(
+      `INSERT INTO vct_events (event_id, name, year, completed, scraped_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(event_id) DO UPDATE SET name = excluded.name, year = excluded.year,
+         completed = excluded.completed, scraped_at = excluded.scraped_at`,
+    ).run(event.id, event.name, event.year, event.completed ? 1 : 0, Date.now());
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
+}
+
+/** Events that finished and were scraped already; they never need to be fetched again. */
+export function getCompletedVctEventIds(): Set<number> {
+  const rows = db.prepare('SELECT event_id FROM vct_events WHERE completed = 1').all() as unknown as {
+    event_id: number;
+  }[];
+  return new Set(rows.map((r) => r.event_id));
+}
+
+/** Drops events (and their comps) from before `minYear`. */
+export function pruneVctBefore(minYear: number): void {
+  db.prepare('DELETE FROM vct_comps WHERE event_id IN (SELECT event_id FROM vct_events WHERE year < ?)').run(minYear);
+  db.prepare('DELETE FROM vct_events WHERE year < ?').run(minYear);
+}
+
+/** Maps that have comps, most played first. */
+export function getVctMaps(): { map: string; games: number }[] {
+  return db
+    .prepare('SELECT map, COUNT(DISTINCT game_id) AS games FROM vct_comps GROUP BY map ORDER BY games DESC, map')
+    .all() as unknown as { map: string; games: number }[];
+}
+
+/** A random comp on `map`, avoiding the given (gameId, team) when there is any alternative. */
+export function getRandomVctComp(map: string, exclude?: { gameId: number; team: string }): VctComp | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM vct_comps WHERE map = ? COLLATE NOCASE AND NOT (game_id = ? AND team = ?)
+       ORDER BY RANDOM() LIMIT 1`,
+    )
+    .get(map, exclude?.gameId ?? -1, exclude?.team ?? '') as unknown as VctCompRow | undefined;
+  if (row) return toVctComp(row);
+  if (!exclude) return null;
+  return getRandomVctComp(map); // only one comp on this map
+}
+
+/** How often this exact comp was played on this map, and by how many teams. */
+export function countVctComp(map: string, agents: string): { games: number; teams: number; wins: number } {
+  return db
+    .prepare(
+      `SELECT COUNT(*) AS games, COUNT(DISTINCT team) AS teams, SUM(result = 'win') AS wins
+       FROM vct_comps WHERE map = ? AND agents = ?`,
+    )
+    .get(map, agents) as unknown as { games: number; teams: number; wins: number };
+}
