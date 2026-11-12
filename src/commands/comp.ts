@@ -5,6 +5,7 @@ import {
   EmbedBuilder,
   SlashCommandBuilder,
   type ButtonInteraction,
+  type Message,
 } from 'discord.js';
 import { countVctComp, getRandomVctComp, getVctMaps, type VctComp } from '../db';
 import { UserError } from '../riot/errors';
@@ -14,6 +15,8 @@ import type { Command } from './types';
 
 export const COMP_PREFIX = 'comp:';
 const MAP_OPTION = 'map';
+/** How long after /comp its Reroll button keeps working (must stay under 15 min, Discord's reply-edit limit). */
+const REROLL_WINDOW_MS = 5 * 60_000;
 
 const NOT_LOADED = 'VCT comp data is still loading from vlr.gg. Try again in a minute.';
 
@@ -59,17 +62,26 @@ function compMessage(comp: VctComp) {
     )
     .setFooter({ text: `VCT ${first}–${last} · data from vlr.gg` });
 
+  // The custom id carries the current comp so a reroll can avoid showing it again.
+  const rerollId = `${COMP_PREFIX}reroll:${comp.gameId}:${comp.map}:${comp.team}`.slice(0, 100);
+  return { embeds: [embed], components: [buttonRow(rerollId, comp.matchUrl, true)] };
+}
+
+function buttonRow(rerollId: string, matchUrl: string | null | undefined, rerollOpen: boolean) {
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder()
-      // Carries the current comp so the reroll can avoid showing it again.
-      .setCustomId(`${COMP_PREFIX}reroll:${comp.gameId}:${comp.map}:${comp.team}`.slice(0, 100))
-      .setLabel('Reroll')
+      .setCustomId(rerollId)
+      .setLabel(rerollOpen ? 'Reroll' : 'Reroll expired')
       .setEmoji('🎲')
-      .setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setLabel('Match on vlr.gg').setStyle(ButtonStyle.Link).setURL(comp.matchUrl),
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(!rerollOpen),
   );
-  return { embeds: [embed], components: [row] };
+  if (matchUrl) row.addComponents(new ButtonBuilder().setLabel('Match on vlr.gg').setStyle(ButtonStyle.Link).setURL(matchUrl));
+  return row;
 }
+
+/** Same message, with the Reroll button greyed out. */
+const closedRow = (message: Message) => buttonRow(`${COMP_PREFIX}expired`, message.embeds[0]?.url, false);
 
 export const comp: Command = {
   data: new SlashCommandBuilder()
@@ -92,6 +104,14 @@ export const comp: Command = {
     const picked = getRandomVctComp(map);
     if (!picked) throw new UserError(`No VCT comps found on **${map}**.`);
     await interaction.reply(compMessage(picked));
+
+    // Grey out Reroll when the window closes. If the bot restarts first, the click check below still refuses it.
+    setTimeout(() => {
+      interaction
+        .fetchReply()
+        .then((msg) => interaction.editReply({ components: [closedRow(msg)] }))
+        .catch(() => {}); // message deleted, etc.
+    }, REROLL_WINDOW_MS);
   },
 };
 
@@ -103,6 +123,14 @@ export async function handleCompButton(interaction: ButtonInteraction): Promise<
   const ownerId = interaction.message.interactionMetadata?.user.id;
   if (ownerId && ownerId !== interaction.user.id) {
     throw new UserError('Only the person who ran `/comp` can reroll this. Run `/comp` yourself to get your own.');
+  }
+  if (Date.now() - interaction.message.createdTimestamp > REROLL_WINDOW_MS) {
+    await interaction.update({ components: [closedRow(interaction.message)] });
+    await interaction.followUp({
+      content: `Reroll is only open for ${REROLL_WINDOW_MS / 60_000} minutes. Run \`/comp\` again for a new comp.`,
+      ephemeral: true,
+    });
+    return;
   }
   ensureLoaded();
   const picked = getRandomVctComp(map, { gameId: Number(gameId), team: teamParts.join(':') });
