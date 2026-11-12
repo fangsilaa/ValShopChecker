@@ -1,8 +1,9 @@
 import { Client, Events, GatewayIntentBits, REST, Routes, type RepliableInteraction } from 'discord.js';
 import cron from 'node-cron';
 import { config } from './config';
+import { accounts, ACCOUNTS_PREFIX, handleAccountsComponent } from './commands/accounts';
 import { bundle } from './commands/bundle';
-import { handleLoginButton, handleLoginModal, login, LOGIN_BUTTON_ID, LOGIN_MODAL_ID, logout } from './commands/login';
+import { handleLoginButton, handleLoginModal, login, LOGIN_BUTTON_ID, LOGIN_MODAL_ID } from './commands/login';
 import { nightmarket } from './commands/nightmarket';
 import { rank } from './commands/rank';
 import { shop } from './commands/shop';
@@ -10,16 +11,16 @@ import type { Command } from './commands/types';
 import { wishlist } from './commands/wishlist';
 import { runDailyCheck } from './jobs/dailyCheck';
 import { ensureAssets } from './riot/assets';
-import { NeedsLoginError, RiotError } from './riot/errors';
+import { NeedsLoginError, RiotError, UserError } from './riot/errors';
 
-const commands: Command[] = [shop, bundle, nightmarket, rank, wishlist, login, logout];
+const commands: Command[] = [shop, bundle, nightmarket, rank, wishlist, login, accounts];
 const byName = new Map(commands.map((c) => [c.data.name, c]));
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 async function replyError(interaction: RepliableInteraction, err: unknown): Promise<void> {
   let message: string;
-  if (err instanceof NeedsLoginError) message = err.message;
+  if (err instanceof NeedsLoginError || err instanceof UserError) message = err.message;
   else if (err instanceof RiotError) {
     message = err.status
       ? `Riot's servers returned an error (${err.status}). Try again in a bit.`
@@ -70,6 +71,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleLoginButton(interaction);
     } else if (interaction.isModalSubmit() && interaction.customId === LOGIN_MODAL_ID) {
       await handleLoginModal(interaction);
+    } else if (
+      (interaction.isButton() || interaction.isStringSelectMenu()) &&
+      interaction.customId.startsWith(ACCOUNTS_PREFIX)
+    ) {
+      await handleAccountsComponent(interaction);
     }
   } catch (err) {
     if (interaction.isRepliable()) await replyError(interaction, err);

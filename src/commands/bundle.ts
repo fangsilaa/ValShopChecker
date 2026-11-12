@@ -2,14 +2,20 @@ import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
 import { ensureAssets, getBundle } from '../riot/assets';
 import { getShop } from '../riot/store';
 import { BRAND_COLOR, relTime, vp } from '../ui';
+import { ACCOUNT_OPTION, accountOption, autocompleteAccounts, resolveAccount } from './accountOption';
 import type { Command } from './types';
 
 export const bundle: Command = {
-  data: new SlashCommandBuilder().setName('bundle').setDescription('Show the current featured bundle(s)'),
+  data: new SlashCommandBuilder()
+    .setName('bundle')
+    .setDescription('Show the current featured bundle(s)')
+    .addStringOption(accountOption),
+  autocomplete: autocompleteAccounts,
   async execute(interaction) {
     await interaction.deferReply({ ephemeral: true });
+    const account = resolveAccount(interaction.user.id, interaction.options.getString(ACCOUNT_OPTION));
     await ensureAssets();
-    const s = await getShop(interaction.user.id);
+    const s = await getShop(account);
 
     if (s.bundles.length === 0) {
       await interaction.editReply('No featured bundle right now.');

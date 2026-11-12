@@ -1,4 +1,5 @@
 import { getCurrentAct } from './assets';
+import type { AccountRef } from '../db';
 import { pdRequest } from './pd';
 
 interface RawSeasonalInfo {
@@ -40,8 +41,8 @@ export interface RankInfo {
   lastGame: { rrChange: number; tierAfter: number; mapPath: string; at: number; actId: string } | null;
 }
 
-export async function getRank(discordId: string): Promise<RankInfo> {
-  const raw = await pdRequest<RawMmr>(discordId, (s) => `/mmr/v1/players/${s.puuid}`, { what: 'Rank request' });
+export async function getRank(account: AccountRef): Promise<RankInfo> {
+  const raw = await pdRequest<RawMmr>(account, (s) => `/mmr/v1/players/${s.puuid}`, { what: 'Rank request' });
 
   const latest = raw.LatestCompetitiveUpdate?.MatchID ? raw.LatestCompetitiveUpdate : null;
   // Prefer the act that is live right now; fall back to the act of the latest ranked game.

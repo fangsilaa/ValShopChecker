@@ -8,15 +8,15 @@ A private Discord bot that shows each linked user their Valorant **daily shop**,
 
 | Command | What it does |
 |---|---|
-| `/login` | Link your Riot account (paste your `ssid` cookie or the redirect URL) |
-| `/logout` | Unlink and delete your stored tokens |
-| `/shop` | Your 4 daily skins with prices |
-| `/bundle` | Current featured bundle(s) |
-| `/nightmarket` | Your night market, when it's running |
-| `/rank [user]` | Competitive rank, RR, last game's RR change and this act's record (public reply). Pick a user to see a friend's rank (they must have linked with `/login`) |
-| `/wishlist [skin]` | Pick a skin to add it (or remove it if it is already on your list). Leave empty to see your list. At 00:02 UTC the bot checks everyone's shop and pings matches |
+| `/login` | Link a Riot account (paste your `ssid` cookie or the redirect URL). Run it again to add an alt (up to 5) or refresh an expired login |
+| `/accounts` | See your linked accounts, change your default, add or remove one |
+| `/shop [account]` | Your 4 daily skins with prices |
+| `/bundle [account]` | Current featured bundle(s) |
+| `/nightmarket [account]` | Your night market, when it's running |
+| `/rank [user] [account]` | Competitive rank, RR, last game's RR change and this act's record (public reply). Pick a user to see a friend's rank (they must have linked with `/login`) |
+| `/wishlist [skin]` | Pick a skin to add it (or remove it if it is already on your list). Leave empty to see your list. At 00:02 UTC the bot checks the shops of all your linked accounts and pings matches |
 
-All replies are only visible to you. Wishlist alerts go to `ALERT_CHANNEL_ID`, or by DM if that isn't set.
+`[account]` is optional and autocompletes your linked accounts; leave it empty to use your default. Replies are only visible to you (except `/rank`). Wishlist alerts go to `ALERT_CHANNEL_ID`, or by DM if that isn't set.
 
 ## Setup
 

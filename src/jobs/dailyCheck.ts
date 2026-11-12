@@ -1,6 +1,6 @@
 import type { Client, EmbedBuilder, MessageCreateOptions } from 'discord.js';
 import { config } from '../config';
-import { getUser, getWishlist, usersWithWishlist } from '../db';
+import { accountLabel, getAccounts, getWishlist, usersWithWishlist } from '../db';
 import { ensureAssets } from '../riot/assets';
 import { NeedsLoginError } from '../riot/errors';
 import { getShop } from '../riot/store';
@@ -21,49 +21,59 @@ async function notify(client: Client, discordId: string, msg: MessageCreateOptio
   await user.send(msg);
 }
 
-/** Fetches every linked user's fresh shop and pings them for wishlist matches. Run just after the 00:00 UTC reset. */
+/**
+ * Fetches the fresh shop of every linked account and pings users for wishlist matches.
+ * The wishlist is per Discord user and checked against all of their accounts. Run just after the 00:00 UTC reset.
+ */
 export async function runDailyCheck(client: Client): Promise<void> {
   await ensureAssets();
   const ids = usersWithWishlist();
   console.log(`Daily check: ${ids.length} user(s) with wishlists`);
 
-  for (const id of ids) {
-    const alreadyNeededLogin = getUser(id)?.needsLogin ?? false;
-    if (alreadyNeededLogin) continue; // already told them; skip until they /login again
+  for (const discordId of ids) {
+    const wanted = new Set(getWishlist(discordId));
+    const accounts = getAccounts(discordId);
+    const multi = accounts.length > 1;
+    const embeds: EmbedBuilder[] = [];
 
-    try {
-      const wanted = new Set(getWishlist(id));
-      const shop = await getShop(id, { force: true });
+    for (const account of accounts) {
+      if (account.needsLogin) continue; // already told them; skip until they /login again
+      const where = multi ? ` on **${accountLabel(account)}**` : '';
 
-      const embeds: EmbedBuilder[] = [];
-      for (const item of shop.daily) {
-        if (wanted.has(item.uuid)) embeds.push(skinEmbed(item.uuid, `In your **daily shop** for ${vp(item.cost)}`));
-      }
-      for (const item of shop.nightMarket ?? []) {
-        if (wanted.has(item.uuid)) {
-          embeds.push(
-            skinEmbed(item.uuid, `In your **night market** for ${vp(item.discountedCost)} (-${item.discountPercent}%)`),
-          );
+      try {
+        const shop = await getShop(account, { force: true });
+        for (const item of shop.daily) {
+          if (wanted.has(item.uuid)) embeds.push(skinEmbed(item.uuid, `In your **daily shop**${where} for ${vp(item.cost)}`));
+        }
+        for (const item of shop.nightMarket ?? []) {
+          if (wanted.has(item.uuid)) {
+            embeds.push(
+              skinEmbed(
+                item.uuid,
+                `In your **night market**${where} for ${vp(item.discountedCost)} (-${item.discountPercent}%)`,
+              ),
+            );
+          }
+        }
+      } catch (err) {
+        if (err instanceof NeedsLoginError) {
+          await notify(client, discordId, {
+            content: `<@${discordId}> I couldn't check **${accountLabel(account)}** for wishlist skins: its Riot login expired. Run \`/login\` with that account to keep getting alerts.`,
+          }).catch((e) => console.error(`Failed to notify ${discordId}:`, e));
+        } else {
+          console.error(`Daily check failed for ${discordId} / ${account.puuid}:`, err);
         }
       }
 
-      if (embeds.length) {
-        await notify(client, id, {
-          content: `<@${id}> 🎯 a skin from your wishlist is in your shop!`,
-          embeds: embeds.slice(0, 10),
-        });
-      }
-    } catch (err) {
-      if (err instanceof NeedsLoginError) {
-        await notify(client, id, {
-          content: `<@${id}> I couldn't check your shop for wishlist skins: your Riot login expired. Run \`/login\` again to keep getting alerts.`,
-        }).catch((e) => console.error(`Failed to notify ${id}:`, e));
-      } else {
-        console.error(`Daily check failed for ${id}:`, err);
-      }
+      await sleep(1500); // be gentle with Riot's API
     }
 
-    await sleep(1500); // be gentle with Riot's API
+    if (embeds.length) {
+      await notify(client, discordId, {
+        content: `<@${discordId}> 🎯 a skin from your wishlist is in your shop!`,
+        embeds: embeds.slice(0, 10),
+      }).catch((e) => console.error(`Failed to notify ${discordId}:`, e));
+    }
   }
   console.log('Daily check done');
 }

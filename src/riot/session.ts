@@ -1,4 +1,4 @@
-import { getUser, setNeedsLogin, updateTokens } from '../db';
+import { accountLabel, getAccount, setNeedsLogin, updateTokens, type AccountRef } from '../db';
 import { getEntitlementsToken, reauthWithCookie } from './auth';
 import { NeedsLoginError } from './errors';
 
@@ -9,41 +9,45 @@ export interface Session {
   entitlementsToken: string;
 }
 
-/** Returns valid tokens for a user, refreshing via the ssid cookie when needed. */
-export async function getSession(discordId: string): Promise<Session> {
-  const user = getUser(discordId);
-  if (!user) throw new NeedsLoginError();
+/** Returns valid tokens for one linked account, refreshing via its ssid cookie when needed. */
+export async function getSession(ref: AccountRef): Promise<Session> {
+  const acct = getAccount(ref);
+  if (!acct) throw new NeedsLoginError();
 
-  if (user.accessToken && user.entitlementsToken && user.tokenExpiresAt > Date.now() + 60_000) {
+  if (acct.accessToken && acct.entitlementsToken && acct.tokenExpiresAt > Date.now() + 60_000) {
     return {
-      puuid: user.puuid,
-      shard: user.shard,
-      accessToken: user.accessToken,
-      entitlementsToken: user.entitlementsToken,
+      puuid: acct.puuid,
+      shard: acct.shard,
+      accessToken: acct.accessToken,
+      entitlementsToken: acct.entitlementsToken,
     };
   }
 
-  if (!user.ssid) {
-    setNeedsLogin(discordId, true);
+  const name = accountLabel(acct);
+  if (!acct.ssid) {
+    setNeedsLogin(ref, true);
     throw new NeedsLoginError(
-      'Your Riot login expired. Run `/login` again. Tip: paste your `ssid` cookie instead of the URL so it lasts for weeks.',
+      `The Riot login for **${name}** expired. Run \`/login\` again with that account. Tip: paste your \`ssid\` cookie instead of the URL so it lasts for weeks.`,
     );
   }
 
   let tokens;
   try {
-    tokens = await reauthWithCookie(user.ssid);
+    tokens = await reauthWithCookie(acct.ssid);
   } catch (err) {
-    if (err instanceof NeedsLoginError) setNeedsLogin(discordId, true);
+    if (err instanceof NeedsLoginError) {
+      setNeedsLogin(ref, true);
+      throw new NeedsLoginError(`The Riot session for **${name}** has expired. Run \`/login\` again with that account.`);
+    }
     throw err;
   }
   const entitlementsToken = await getEntitlementsToken(tokens.accessToken);
-  updateTokens(discordId, {
+  updateTokens(ref, {
     accessToken: tokens.accessToken,
     entitlementsToken,
     expiresAt: tokens.expiresAt,
     ssid: tokens.ssid,
   });
 
-  return { puuid: user.puuid, shard: user.shard, accessToken: tokens.accessToken, entitlementsToken };
+  return { puuid: acct.puuid, shard: acct.shard, accessToken: tokens.accessToken, entitlementsToken };
 }

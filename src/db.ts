@@ -8,9 +8,12 @@ fs.mkdirSync(path.dirname(path.resolve(config.dbPath)), { recursive: true });
 const db = new DatabaseSync(config.dbPath);
 db.exec('PRAGMA journal_mode = WAL');
 
+/** Max Riot accounts one Discord user can link. */
+export const MAX_ACCOUNTS = 5;
+
 db.exec(`
-CREATE TABLE IF NOT EXISTS users (
-  discord_id        TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS accounts (
+  discord_id        TEXT NOT NULL,
   puuid             TEXT NOT NULL,
   riot_name         TEXT,
   region            TEXT NOT NULL,
@@ -19,23 +22,54 @@ CREATE TABLE IF NOT EXISTS users (
   access_token_enc  TEXT,
   entitlements_enc  TEXT,
   token_expires_at  INTEGER NOT NULL DEFAULT 0,
-  needs_login       INTEGER NOT NULL DEFAULT 0
+  needs_login       INTEGER NOT NULL DEFAULT 0,
+  is_default        INTEGER NOT NULL DEFAULT 0,
+  linked_at         INTEGER NOT NULL,
+  PRIMARY KEY (discord_id, puuid)
 );
 CREATE TABLE IF NOT EXISTS wishlist (
   discord_id      TEXT NOT NULL,
   skin_level_uuid TEXT NOT NULL,
   PRIMARY KEY (discord_id, skin_level_uuid)
 );
-CREATE TABLE IF NOT EXISTS shop_cache (
-  discord_id TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS account_shop_cache (
+  puuid      TEXT PRIMARY KEY,
   data       TEXT NOT NULL,
   expires_at INTEGER NOT NULL
 );
 `);
 
-export interface UserRecord {
+// ---- one-time migration from the single-account schema (users + shop_cache) ----
+{
+  const hasOldUsers = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'users'").get();
+  if (hasOldUsers) {
+    db.exec('BEGIN');
+    try {
+      db.prepare(
+        `INSERT OR IGNORE INTO accounts (discord_id, puuid, riot_name, region, shard, ssid_enc, access_token_enc,
+           entitlements_enc, token_expires_at, needs_login, is_default, linked_at)
+         SELECT discord_id, puuid, riot_name, region, shard, ssid_enc, access_token_enc,
+           entitlements_enc, token_expires_at, needs_login, 1, ?
+         FROM users`,
+      ).run(Date.now());
+      db.exec('DROP TABLE users');
+      db.exec('DROP TABLE IF EXISTS shop_cache');
+      db.exec('COMMIT');
+      console.log('Migrated linked users to the multi-account schema');
+    } catch (err) {
+      db.exec('ROLLBACK');
+      throw err;
+    }
+  }
+}
+
+/** Identifies one linked Riot account. */
+export interface AccountRef {
   discordId: string;
   puuid: string;
+}
+
+export interface Account extends AccountRef {
   riotName: string | null;
   region: string;
   shard: string;
@@ -44,9 +78,10 @@ export interface UserRecord {
   entitlementsToken: string | null;
   tokenExpiresAt: number; // epoch ms
   needsLogin: boolean;
+  isDefault: boolean;
 }
 
-interface UserRow {
+interface AccountRow {
   discord_id: string;
   puuid: string;
   riot_name: string | null;
@@ -57,6 +92,8 @@ interface UserRow {
   entitlements_enc: string | null;
   token_expires_at: number;
   needs_login: number;
+  is_default: number;
+  linked_at: number;
 }
 
 const enc = (v: string | null) => (v ? encrypt(v) : null);
@@ -70,11 +107,7 @@ function dec(v: string | null): string | null {
   }
 }
 
-// ---- users ----
-
-export function getUser(discordId: string): UserRecord | null {
-  const row = db.prepare('SELECT * FROM users WHERE discord_id = ?').get(discordId) as unknown as UserRow | undefined;
-  if (!row) return null;
+function toAccount(row: AccountRow): Account {
   return {
     discordId: row.discord_id,
     puuid: row.puuid,
@@ -86,52 +119,113 @@ export function getUser(discordId: string): UserRecord | null {
     entitlementsToken: dec(row.entitlements_enc),
     tokenExpiresAt: row.token_expires_at,
     needsLogin: row.needs_login === 1,
+    isDefault: row.is_default === 1,
   };
 }
 
-export function saveUser(u: UserRecord): void {
+/** Display name for an account: Riot ID if known, otherwise a short puuid. */
+export const accountLabel = (a: Pick<Account, 'riotName' | 'puuid'>) => a.riotName ?? `Account ${a.puuid.slice(0, 8)}`;
+
+// ---- accounts ----
+
+/** All accounts of a Discord user, default first, then in the order they were linked. */
+export function getAccounts(discordId: string): Account[] {
+  const rows = db
+    .prepare('SELECT * FROM accounts WHERE discord_id = ? ORDER BY is_default DESC, linked_at ASC')
+    .all(discordId) as unknown as AccountRow[];
+  return rows.map(toAccount);
+}
+
+export function getAccount(ref: AccountRef): Account | null {
+  const row = db
+    .prepare('SELECT * FROM accounts WHERE discord_id = ? AND puuid = ?')
+    .get(ref.discordId, ref.puuid) as unknown as AccountRow | undefined;
+  return row ? toAccount(row) : null;
+}
+
+export function getDefaultAccount(discordId: string): Account | null {
+  return getAccounts(discordId)[0] ?? null;
+}
+
+/**
+ * Inserts or refreshes a linked account. The first account a user links becomes their default;
+ * re-linking an existing account keeps its default flag. Returns whether it was newly added.
+ */
+export function saveAccount(a: Omit<Account, 'isDefault'>): { isNew: boolean; isDefault: boolean } {
+  const existing = getAccount(a);
+  const hasDefault = getAccounts(a.discordId).some((x) => x.isDefault);
+  const isDefault = existing?.isDefault ?? !hasDefault;
   db.prepare(
-    `INSERT INTO users (discord_id, puuid, riot_name, region, shard, ssid_enc, access_token_enc, entitlements_enc, token_expires_at, needs_login)
-     VALUES (@discordId, @puuid, @riotName, @region, @shard, @ssid, @accessToken, @entitlementsToken, @tokenExpiresAt, @needsLogin)
-     ON CONFLICT(discord_id) DO UPDATE SET
-       puuid = excluded.puuid, riot_name = excluded.riot_name, region = excluded.region, shard = excluded.shard,
+    `INSERT INTO accounts (discord_id, puuid, riot_name, region, shard, ssid_enc, access_token_enc, entitlements_enc,
+       token_expires_at, needs_login, is_default, linked_at)
+     VALUES (@discordId, @puuid, @riotName, @region, @shard, @ssid, @accessToken, @entitlementsToken,
+       @tokenExpiresAt, @needsLogin, @isDefault, @linkedAt)
+     ON CONFLICT(discord_id, puuid) DO UPDATE SET
+       riot_name = excluded.riot_name, region = excluded.region, shard = excluded.shard,
        ssid_enc = excluded.ssid_enc, access_token_enc = excluded.access_token_enc, entitlements_enc = excluded.entitlements_enc,
        token_expires_at = excluded.token_expires_at, needs_login = excluded.needs_login`,
   ).run({
-    ...u,
-    ssid: enc(u.ssid),
-    accessToken: enc(u.accessToken),
-    entitlementsToken: enc(u.entitlementsToken),
-    needsLogin: u.needsLogin ? 1 : 0,
+    discordId: a.discordId,
+    puuid: a.puuid,
+    riotName: a.riotName,
+    region: a.region,
+    shard: a.shard,
+    ssid: enc(a.ssid),
+    accessToken: enc(a.accessToken),
+    entitlementsToken: enc(a.entitlementsToken),
+    tokenExpiresAt: a.tokenExpiresAt,
+    needsLogin: a.needsLogin ? 1 : 0,
+    isDefault: isDefault ? 1 : 0,
+    linkedAt: Date.now(),
   });
+  return { isNew: !existing, isDefault };
 }
 
 export function updateTokens(
-  discordId: string,
+  ref: AccountRef,
   t: { accessToken: string; entitlementsToken: string; expiresAt: number; ssid: string | null },
 ): void {
   db.prepare(
-    `UPDATE users SET access_token_enc = ?, entitlements_enc = ?, token_expires_at = ?, ssid_enc = ?, needs_login = 0
-     WHERE discord_id = ?`,
-  ).run(enc(t.accessToken), enc(t.entitlementsToken), t.expiresAt, enc(t.ssid), discordId);
+    `UPDATE accounts SET access_token_enc = ?, entitlements_enc = ?, token_expires_at = ?, ssid_enc = ?, needs_login = 0
+     WHERE discord_id = ? AND puuid = ?`,
+  ).run(enc(t.accessToken), enc(t.entitlementsToken), t.expiresAt, enc(t.ssid), ref.discordId, ref.puuid);
 }
 
 /** Forces the next request to re-authenticate. */
-export function expireTokens(discordId: string): void {
-  db.prepare('UPDATE users SET token_expires_at = 0 WHERE discord_id = ?').run(discordId);
+export function expireTokens(ref: AccountRef): void {
+  db.prepare('UPDATE accounts SET token_expires_at = 0 WHERE discord_id = ? AND puuid = ?').run(ref.discordId, ref.puuid);
 }
 
-export function setNeedsLogin(discordId: string, value: boolean): void {
-  db.prepare('UPDATE users SET needs_login = ? WHERE discord_id = ?').run(value ? 1 : 0, discordId);
+export function setNeedsLogin(ref: AccountRef, value: boolean): void {
+  db.prepare('UPDATE accounts SET needs_login = ? WHERE discord_id = ? AND puuid = ?').run(
+    value ? 1 : 0,
+    ref.discordId,
+    ref.puuid,
+  );
 }
 
-/** Unlinks the Riot account. The wishlist is kept so re-linking restores it. */
-export function deleteUser(discordId: string): void {
-  db.prepare('DELETE FROM users WHERE discord_id = ?').run(discordId);
-  clearCachedShop(discordId);
+export function setDefaultAccount(ref: AccountRef): void {
+  db.exec('BEGIN');
+  try {
+    db.prepare('UPDATE accounts SET is_default = 0 WHERE discord_id = ?').run(ref.discordId);
+    db.prepare('UPDATE accounts SET is_default = 1 WHERE discord_id = ? AND puuid = ?').run(ref.discordId, ref.puuid);
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
+  }
 }
 
-// ---- wishlist ----
+/** Unlinks one account (deleting its tokens). If it was the default, the oldest remaining account becomes default. */
+export function deleteAccount(ref: AccountRef): boolean {
+  const res = db.prepare('DELETE FROM accounts WHERE discord_id = ? AND puuid = ?').run(ref.discordId, ref.puuid);
+  clearCachedShop(ref.puuid);
+  const remaining = getAccounts(ref.discordId);
+  if (remaining.length && !remaining.some((a) => a.isDefault)) setDefaultAccount(remaining[0]);
+  return res.changes > 0;
+}
+
+// ---- wishlist (per Discord user, shared by all their accounts) ----
 
 export function getWishlist(discordId: string): string[] {
   const rows = db.prepare('SELECT skin_level_uuid FROM wishlist WHERE discord_id = ?').all(discordId) as unknown as {
@@ -155,30 +249,30 @@ export function removeWishlist(discordId: string, skinLevelUuid: string): boolea
   return res.changes > 0;
 }
 
-/** Linked users that have at least one wishlist entry. */
+/** Discord users that have at least one wishlist entry and at least one linked account. */
 export function usersWithWishlist(): string[] {
   const rows = db
-    .prepare('SELECT DISTINCT w.discord_id FROM wishlist w JOIN users u ON u.discord_id = w.discord_id')
+    .prepare('SELECT DISTINCT w.discord_id FROM wishlist w JOIN accounts a ON a.discord_id = w.discord_id')
     .all() as unknown as { discord_id: string }[];
   return rows.map((r) => r.discord_id);
 }
 
-// ---- shop cache ----
+// ---- shop cache (per Riot account) ----
 
-export function getCachedShop<T>(discordId: string): T | null {
+export function getCachedShop<T>(puuid: string): T | null {
   const row = db
-    .prepare('SELECT data FROM shop_cache WHERE discord_id = ? AND expires_at > ?')
-    .get(discordId, Date.now()) as unknown as { data: string } | undefined;
+    .prepare('SELECT data FROM account_shop_cache WHERE puuid = ? AND expires_at > ?')
+    .get(puuid, Date.now()) as unknown as { data: string } | undefined;
   return row ? (JSON.parse(row.data) as T) : null;
 }
 
-export function setCachedShop(discordId: string, data: unknown, expiresAt: number): void {
+export function setCachedShop(puuid: string, data: unknown, expiresAt: number): void {
   db.prepare(
-    `INSERT INTO shop_cache (discord_id, data, expires_at) VALUES (?, ?, ?)
-     ON CONFLICT(discord_id) DO UPDATE SET data = excluded.data, expires_at = excluded.expires_at`,
-  ).run(discordId, JSON.stringify(data), expiresAt);
+    `INSERT INTO account_shop_cache (puuid, data, expires_at) VALUES (?, ?, ?)
+     ON CONFLICT(puuid) DO UPDATE SET data = excluded.data, expires_at = excluded.expires_at`,
+  ).run(puuid, JSON.stringify(data), expiresAt);
 }
 
-export function clearCachedShop(discordId: string): void {
-  db.prepare('DELETE FROM shop_cache WHERE discord_id = ?').run(discordId);
+export function clearCachedShop(puuid: string): void {
+  db.prepare('DELETE FROM account_shop_cache WHERE puuid = ?').run(puuid);
 }

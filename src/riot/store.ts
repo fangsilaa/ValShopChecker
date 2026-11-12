@@ -1,4 +1,4 @@
-import { getCachedShop, setCachedShop } from '../db';
+import { getCachedShop, setCachedShop, type AccountRef } from '../db';
 import { pdRequest } from './pd';
 
 const VP = '85ad13f7-3d1b-5128-9eb2-7cd8ee0b5741';
@@ -59,8 +59,8 @@ interface RawStorefront {
 
 // ---- storefront ----
 
-function fetchStorefront(discordId: string): Promise<RawStorefront> {
-  return pdRequest<RawStorefront>(discordId, (s) => `/store/v3/storefront/${s.puuid}`, {
+function fetchStorefront(account: AccountRef): Promise<RawStorefront> {
+  return pdRequest<RawStorefront>(account, (s) => `/store/v3/storefront/${s.puuid}`, {
     method: 'POST',
     body: {},
     what: 'Storefront request',
@@ -109,13 +109,13 @@ function parseStorefront(raw: RawStorefront): Shop {
   };
 }
 
-/** Gets a user's shop, cached until the daily reset. */
-export async function getShop(discordId: string, opts: { force?: boolean } = {}): Promise<Shop> {
+/** Gets an account's shop, cached until the daily reset. */
+export async function getShop(account: AccountRef, opts: { force?: boolean } = {}): Promise<Shop> {
   if (!opts.force) {
-    const cached = getCachedShop<Shop>(discordId);
+    const cached = getCachedShop<Shop>(account.puuid);
     if (cached) return cached;
   }
-  const shop = parseStorefront(await fetchStorefront(discordId));
-  setCachedShop(discordId, shop, shop.dailyExpiresAt);
+  const shop = parseStorefront(await fetchStorefront(account));
+  setCachedShop(account.puuid, shop, shop.dailyExpiresAt);
   return shop;
 }

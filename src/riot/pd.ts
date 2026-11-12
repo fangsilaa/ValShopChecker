@@ -1,4 +1,4 @@
-import { expireTokens } from '../db';
+import { expireTokens, type AccountRef } from '../db';
 import { NeedsLoginError, RiotError, riotFetch } from './errors';
 import { getSession, type Session } from './session';
 
@@ -24,11 +24,11 @@ async function getClientVersion(): Promise<string> {
 }
 
 /**
- * Calls `https://pd.{shard}.a.pvp.net{path}` as the given Discord user.
+ * Calls `https://pd.{shard}.a.pvp.net{path}` as the given linked Riot account.
  * On an expired/invalid token (400 BAD_CLAIMS or 401) it refreshes once via the ssid cookie and retries.
  */
 export async function pdRequest<T>(
-  discordId: string,
+  account: AccountRef,
   path: (s: Session) => string,
   opts: { method?: 'GET' | 'POST'; body?: unknown; what?: string } = {},
 ): Promise<T> {
@@ -36,7 +36,7 @@ export async function pdRequest<T>(
   const what = opts.what ?? 'Riot request';
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    const s = await getSession(discordId);
+    const s = await getSession(account);
     const res = await riotFetch(`https://pd.${s.shard}.a.pvp.net${path(s)}`, {
       method: opts.method ?? 'GET',
       headers: {
@@ -49,7 +49,7 @@ export async function pdRequest<T>(
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     });
     if (res.status === 400 || res.status === 401) {
-      expireTokens(discordId);
+      expireTokens(account);
       if (attempt === 0) continue;
       throw new NeedsLoginError('Riot rejected your login. Run `/login` again.');
     }

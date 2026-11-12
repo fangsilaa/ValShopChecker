@@ -1,21 +1,26 @@
 import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
-import { getUser } from '../db';
+import { accountLabel } from '../db';
 import { ensureAssets } from '../riot/assets';
 import { getShop } from '../riot/store';
 import { BRAND_COLOR, relTime, skinEmbed, vp } from '../ui';
+import { ACCOUNT_OPTION, accountOption, autocompleteAccounts, resolveAccount } from './accountOption';
 import type { Command } from './types';
 
 export const shop: Command = {
-  data: new SlashCommandBuilder().setName('shop').setDescription('Show your Valorant daily shop'),
+  data: new SlashCommandBuilder()
+    .setName('shop')
+    .setDescription('Show your Valorant daily shop')
+    .addStringOption(accountOption),
+  autocomplete: autocompleteAccounts,
   async execute(interaction) {
     await interaction.deferReply({ ephemeral: true });
+    const account = resolveAccount(interaction.user.id, interaction.options.getString(ACCOUNT_OPTION));
     await ensureAssets();
-    const s = await getShop(interaction.user.id);
-    const user = getUser(interaction.user.id);
+    const s = await getShop(account);
 
     const header = new EmbedBuilder()
       .setColor(BRAND_COLOR)
-      .setTitle(`Daily shop${user?.riotName ? ` · ${user.riotName}` : ''}`)
+      .setTitle(`Daily shop · ${accountLabel(account)}`)
       .setDescription(`Resets ${relTime(s.dailyExpiresAt)}`);
 
     await interaction.editReply({

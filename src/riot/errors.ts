@@ -6,6 +6,14 @@ export class NeedsLoginError extends Error {
   }
 }
 
+/** A problem with what the user asked for. Message is shown to the user as-is. */
+export class UserError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'UserError';
+  }
+}
+
 /** Riot (or valorant-api.com) returned an unexpected error. */
 export class RiotError extends Error {
   constructor(

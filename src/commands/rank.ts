@@ -1,9 +1,10 @@
 import { EmbedBuilder, SlashCommandBuilder } from 'discord.js';
-import { getUser } from '../db';
+import { accountLabel } from '../db';
 import { ensureAssets, getAct, getMapName, getRankTier } from '../riot/assets';
 import { NeedsLoginError } from '../riot/errors';
 import { getRank } from '../riot/mmr';
 import { BRAND_COLOR, relTime } from '../ui';
+import { ACCOUNT_OPTION, accountOption, autocompleteAccounts, resolveAccount } from './accountOption';
 import type { Command } from './types';
 
 const tierName = (tier: number) => getRankTier(tier)?.name ?? (tier === 0 ? 'Unranked' : `Tier ${tier}`);
@@ -14,7 +15,9 @@ export const rank: Command = {
     .setDescription('Show a competitive rank and RR (yours by default)')
     .addUserOption((o) =>
       o.setName('user').setDescription('Whose rank to show (they must have used /login). Default: you').setRequired(false),
-    ),
+    )
+    .addStringOption(accountOption),
+  autocomplete: autocompleteAccounts, // suggests the picked user's accounts when `user:` is filled in
   async execute(interaction) {
     const target = interaction.options.getUser('user') ?? interaction.user;
     const isSelf = target.id === interaction.user.id;
@@ -26,31 +29,39 @@ export const rank: Command = {
 
     // Public reply so you can show it off; errors (e.g. not linked) still come back here.
     await interaction.deferReply();
+
+    let account;
+    try {
+      account = resolveAccount(target.id, interaction.options.getString(ACCOUNT_OPTION), isSelf);
+    } catch (err) {
+      if (!isSelf) {
+        await interaction.editReply(`**${target.displayName}**: ${(err as Error).message}`);
+        return;
+      }
+      throw err;
+    }
+
     await ensureAssets();
 
     let r;
     try {
-      r = await getRank(target.id);
+      r = await getRank(account);
     } catch (err) {
       if (err instanceof NeedsLoginError && !isSelf) {
-        const linked = getUser(target.id) !== null;
         await interaction.editReply(
-          linked
-            ? `**${target.displayName}**'s Riot login has expired. They need to run \`/login\` again.`
-            : `**${target.displayName}** hasn't linked a Riot account with \`/login\`, so I can't see their rank.`,
+          `The Riot login for **${target.displayName}**'s account **${accountLabel(account)}** has expired. They need to run \`/login\` again.`,
         );
         return;
       }
       throw err;
     }
 
-    const user = getUser(target.id);
     const tierInfo = getRankTier(r.tier);
     const act = r.actId ? getAct(r.actId) : undefined;
 
     const embed = new EmbedBuilder()
       .setColor(r.tier > 0 ? (tierInfo?.color ?? BRAND_COLOR) : 0x2b2d31)
-      .setAuthor({ name: user?.riotName ?? target.displayName, iconURL: target.displayAvatarURL() })
+      .setAuthor({ name: accountLabel(account), iconURL: target.displayAvatarURL() })
       .setFooter({ text: act?.name ?? 'Current act' });
 
     if (r.tier > 0) {
