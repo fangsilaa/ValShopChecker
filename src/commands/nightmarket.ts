@@ -13,7 +13,7 @@ export const nightmarket: Command = {
     .addStringOption(accountOption),
   autocomplete: autocompleteAccounts,
   async execute(interaction) {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply(); // public reply
     const account = resolveAccount(interaction.user.id, interaction.options.getString(ACCOUNT_OPTION));
     await ensureAssets();
     const s = await getShop(account);

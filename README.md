@@ -16,7 +16,7 @@ A private Discord bot that shows each linked user their Valorant **daily shop**,
 | `/rank [user] [account]` | Competitive rank, RR, last game's RR change and this act's record (public reply). Pick a user to see a friend's rank (they must have linked with `/login`) |
 | `/wishlist [skin]` | Pick a skin to add it (or remove it if it is already on your list). Leave empty to see your list. At 00:02 UTC the bot checks the shops of all your linked accounts and pings matches |
 
-`[account]` is optional and autocompletes your linked accounts; leave it empty to use your default. Replies are only visible to you (except `/rank`). Wishlist alerts go to `ALERT_CHANNEL_ID`, or by DM if that isn't set.
+`[account]` is optional and autocompletes your linked accounts; leave it empty to use your default. `/shop`, `/nightmarket` and `/rank` reply publicly; the others are only visible to you. Wishlist alerts go to `ALERT_CHANNEL_ID`, or by DM if that isn't set.
 
 ## Setup
 
