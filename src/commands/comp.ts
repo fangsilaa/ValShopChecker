@@ -99,6 +99,11 @@ export const comp: Command = {
 export async function handleCompButton(interaction: ButtonInteraction): Promise<void> {
   const [, action, gameId, map, ...teamParts] = interaction.customId.split(':');
   if (action !== 'reroll' || !map) return;
+  // Only whoever ran /comp may reroll (Discord's command permissions don't cover buttons).
+  const ownerId = interaction.message.interactionMetadata?.user.id;
+  if (ownerId && ownerId !== interaction.user.id) {
+    throw new UserError('Only the person who ran `/comp` can reroll this. Run `/comp` yourself to get your own.');
+  }
   ensureLoaded();
   const picked = getRandomVctComp(map, { gameId: Number(gameId), team: teamParts.join(':') });
   if (!picked) throw new UserError(`No VCT comps found on **${map}**.`);
